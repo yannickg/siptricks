@@ -1,0 +1,127 @@
+Index: apps/clicktocall/clicktocall.config
+===================================================================
+--- apps/clicktocall/clicktocall.config	(révision 11214)
++++ apps/clicktocall/clicktocall.config	(copie de travail)
+@@ -11,22 +11,24 @@
+ # ichat-gw will bind to all adapters.
+ #IPAddress = 192.168.1.106
+ #IPAddress = 2001:5c0:1000:a::6d
+-IPAddress = 
++IPAddress = 198.23.139.114
+ 
+ # Comma separated list of DNS servers, overrides default OS detected list (leave blank for default)
+ DNSServers =
+ 
+ # Used in From header of SIP calls, when calling initiator.  Value must be a valid formatted SIP Uri
+-ClickToCallIdentity = sip:click2call@blitzzgod.com
++ClickToCallIdentity = sips:click2call@siptricks.com;transport=TLS
+ 
++Contact = sips:click2call@siptricks.com;transport=TLS
++
+ # Local port to listen on for SIP messages over UDP or TCP
+-UDPTCPPort = 5072
++UDPTCPPort = 55060
+ 
+ # Local port to listen on for SIP messages over TLS
+-TLSPort = 5073
++TLSPort = 55061
+ 
+ # TLS domain name for this server (note: domain cert for this domain must be present)
+-TLSDomainName =   
++TLSDomain = siptricks.com
+ 
+ # Enable/Disable TCP/UDP CRLFCRLF keepalive packets for SIP endpoints
+ # 1|true|on|enable to enable, 0|false|off|disable to disable
+@@ -34,7 +36,7 @@
+ 
+ # URI of a proxy server to use a SIP outbound proxy.  This setting should not be required if 
+ # proper DNS based SIP routing is operational.
+-OutboundProxy =
++OutboundProxy = siptricks.com
+ 
+ 
+ ########################################################
+@@ -42,7 +44,7 @@
+ ########################################################
+ 
+ # Logging level: NONE|CRIT|ERR|WARNING|INFO|DEBUG|STACK
+-LogLevel = INFO
++LogLevel = STACK
+ 
+ # Log Filename
+ LogFilename = clicktocall.log
+@@ -53,19 +55,19 @@
+ # Port to listen for XML RPC requests on.  Set to 0 to disable.  
+ # Note: clicktocall will listen on this port for all interfaces, for both IPv4 
+ #       and IPv6 (if available). 
+-XmlRpcPort = 5094
++XmlRpcPort = 0
+ 
+ # Port to listen on for HTTP messaging (ie. Click-to-call).  Set to 0 to disable.
+ # Note: clicktocall will listen on this port for all interfaces, for both IPv4 
+ #       and IPv6 (if available).
+-HttpPort = 5090
++HttpPort = 5081
+ 
+ # Enable/Disable HTTP Digest authentication: 1|true|on to enable
+ # 1|true|on|enable to enable, 0|false|off|disable to disable
+ HttpAuth = enable
+ 
+ # Password required if HttpAuth is enabled:  Note: auth user is always "admin"
+-HttpAuthPwd = admin
++HttpAuthPwd = Buddy154
+ 
+ 
+ ########################################################
+@@ -74,7 +76,7 @@
+ 
+ # Rule for mapping any non-sip address to appropriate SIP URI
+ TranslationPattern=^(.*)$
+-TranslationOutput=sip:$1@blitzzgod.com
++TranslationOutput=sips:$1@siptricks.com;transport=TLS
+ 
+ 
+ 
+Index: apps/clicktocall/ConfigParser.cxx
+===================================================================
+--- apps/clicktocall/ConfigParser.cxx	(révision 11214)
++++ apps/clicktocall/ConfigParser.cxx	(copie de travail)
+@@ -260,6 +260,10 @@
+          mAddressTranslations.back().second = value;
+       }
+    }
++   else if(name == "contact")
++   {
++      result = assignNameAddr("contact", value, mContact);
++   }
+    else
+    {
+       result = false;
+Index: apps/clicktocall/ConfigParser.hxx
+===================================================================
+--- apps/clicktocall/ConfigParser.hxx	(révision 11214)
++++ apps/clicktocall/ConfigParser.hxx	(copie de travail)
+@@ -39,6 +39,7 @@
+    resip::Data mHttpAuthPwd;
+    typedef std::list<std::pair<resip::Data,resip::Data> > TranslationList;
+    TranslationList mAddressTranslations;
++   resip::NameAddr mContact;
+ };
+  
+ }
+Index: apps/clicktocall/Server.cxx
+===================================================================
+--- apps/clicktocall/Server.cxx	(révision 11214)
++++ apps/clicktocall/Server.cxx	(copie de travail)
+@@ -308,7 +308,10 @@
+ 
+    mProfile->setDefaultFrom(mClickToCallIdentity);
+ 
+-   //profile->setOverrideHostAndPort(mContact);
++   if(!mContact.uri().host().empty())
++   {
++      mProfile->setOverrideHostAndPort(mContact.uri());
++   }
+    if(!mOutboundProxy.uri().host().empty())
+    {
+       mProfile->setOutboundProxy(mOutboundProxy.uri());

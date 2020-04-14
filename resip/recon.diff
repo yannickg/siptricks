@@ -1,0 +1,189 @@
+Index: resip/recon/ConversationManagerCmds.hxx
+===================================================================
+--- resip/recon/ConversationManagerCmds.hxx	(révision 11214)
++++ resip/recon/ConversationManagerCmds.hxx	(copie de travail)
+@@ -9,6 +9,7 @@
+ #include "RemoteParticipant.hxx"
+ #include "LocalParticipant.hxx"
+ #include "MediaResourceParticipant.hxx"
++#include "MediaRecordingParticipant.hxx"
+ 
+ #define RESIPROCATE_SUBSYSTEM ReconSubsystem::RECON
+ 
+@@ -217,6 +218,50 @@
+       resip::Uri mMediaUrl;
+ };
+ 
++class RecordConversationCmd  : public resip::DumCommand
++{
++   public:  
++      RecordConversationCmd(ConversationManager* conversationManager, 
++                                        ParticipantHandle partHandle,
++                                        ConversationHandle convHandle,
++                                        const resip::Data& file) 
++         : mConversationManager(conversationManager),
++          mPartHandle(partHandle),
++           mConvHandle(convHandle),
++           mFile(file) {}
++      virtual void executeCommand()
++      {
++         Conversation* conversation = mConversationManager->getConversation(mConvHandle);
++         if(conversation)
++         {
++            MediaRecordingParticipant* mediaRecordingParticipant = new MediaRecordingParticipant(mPartHandle, *mConversationManager, mFile);
++            if(mediaRecordingParticipant)
++            {
++               conversation->addParticipant(mediaRecordingParticipant);
++               mediaRecordingParticipant->startRecording();
++            }
++            else
++            {
++               WarningLog(<< "RecordConversationCmd: error creating MediaRecordingParticipant.");
++               mConversationManager->onParticipantDestroyed(mPartHandle);
++            }
++         }
++         else
++         {
++            WarningLog(<< "RecordConversationCmd: invalid conversation handle.");
++            mConversationManager->onParticipantDestroyed(mPartHandle);
++         }
++      }
++      resip::Message* clone() const { assert(0); return 0; }
++      EncodeStream& encode(EncodeStream& strm) const { strm << " RecordConversationCmd: "; return strm; }
++      EncodeStream& encodeBrief(EncodeStream& strm) const { return encode(strm); }
++   private:
++      ConversationManager* mConversationManager;
++      ParticipantHandle mPartHandle;
++      ConversationHandle mConvHandle;
++      resip::Data mFile;
++};
++
+ class CreateLocalParticipantCmd  : public resip::DumCommand
+ {
+    public:  
+Index: resip/recon/ConversationManager.hxx
+===================================================================
+--- resip/recon/ConversationManager.hxx	(révision 11214)
++++ resip/recon/ConversationManager.hxx	(copie de travail)
+@@ -223,6 +223,8 @@
+    */   
+    virtual ParticipantHandle createMediaResourceParticipant(ConversationHandle convHandle, const resip::Uri& mediaUrl);
+ 
++   virtual ParticipantHandle recordConversation(ConversationHandle convHandle, const resip::Data& file);
++
+    /**
+      Creates a new local participant in the specified conversation.
+      A local participant is a representation of the local source (speaker) 
+@@ -604,6 +606,7 @@
+ 
+    friend class RemoteParticipantDialogSet;
+    friend class MediaResourceParticipant;
++   friend class MediaRecordingParticipant;
+    friend class LocalParticipant;
+    friend class BridgeMixer;
+    friend class MediaInterface;
+@@ -616,11 +619,14 @@
+    virtual void buildSdpOffer(ConversationProfile* profile, resip::SdpContents& offer);
+ 
+    friend class MediaResourceParticipantDeleterCmd;
++   friend class MediaRecordingParticipantDeleterCmd;
+    friend class CreateConversationCmd;
+    friend class DestroyConversationCmd;
+    friend class JoinConversationCmd;
+    friend class CreateRemoteParticipantCmd;
+    friend class CreateMediaResourceParticipantCmd;
++   friend class CreateMediaRecordingParticipantCmd;
++   friend class RecordConversationCmd;
+    friend class CreateLocalParticipantCmd;
+    friend class DestroyParticipantCmd;
+    friend class AddParticipantCmd;
+Index: resip/recon/Conversation.hxx
+===================================================================
+--- resip/recon/Conversation.hxx	(révision 11214)
++++ resip/recon/Conversation.hxx	(copie de travail)
+@@ -71,6 +71,7 @@
+    friend class LocalParticipant;
+    friend class RemoteParticipant;
+    friend class MediaResourceParticipant;
++   friend class MediaRecordingParticipant;
+    void registerParticipant(Participant *, unsigned int inputGain=100, unsigned int outputGain=100);
+    void unregisterParticipant(Participant *);
+ 
+Index: resip/recon/test/testUA.cxx
+===================================================================
+--- resip/recon/test/testUA.cxx	(révision 11214)
++++ resip/recon/test/testUA.cxx	(copie de travail)
+@@ -433,6 +433,31 @@
+       }
+       return;
+    }
++   if(isEqualNoCase(command, "recordconf") || isEqualNoCase(command, "rc"))
++   {
++      unsigned long handle = arg[0].convertUnsignedLong();
++      if(handle != 0 && !arg[1].empty())
++      {
++         try
++         {
++            Data file(arg[1]);
++            myConversationManager.recordConversation(handle, file);
++         }
++         catch(resip::BaseException& e)
++         {
++            InfoLog( << "Invalid url format: <'recordconf'|'rc'> <convHandle> <file>: " << e);
++         }
++         catch(...)
++         {
++            InfoLog( << "Invalid url format: <'recordconf'|'rc'> <convHandle> <file>");
++         }
++      }
++      else
++      {
++         InfoLog( << "Invalid command format: <'recordconf'|'rc'> <convHandle> <file>");
++      }
++      return;
++   }
+    if(isEqualNoCase(command, "destroypart") || isEqualNoCase(command, "dp"))
+    {
+       unsigned long handle = arg[0].convertUnsignedLong();
+Index: resip/recon/ConversationManager.cxx
+===================================================================
+--- resip/recon/ConversationManager.cxx	(révision 11214)
++++ resip/recon/ConversationManager.cxx	(copie de travail)
+@@ -232,6 +232,17 @@
+ }
+ 
+ ParticipantHandle 
++ConversationManager::recordConversation(ConversationHandle convHandle, const Data& file)
++{
++   ParticipantHandle partHandle = getNewParticipantHandle();
++
++   RecordConversationCmd* cmd = new RecordConversationCmd(this, partHandle, convHandle, file);
++   post(cmd);
++
++   return partHandle;
++}
++
++ParticipantHandle 
+ ConversationManager::createLocalParticipant()
+ {
+    ParticipantHandle partHandle = 0;
+Index: resip/recon/Makefile.am
+===================================================================
+--- resip/recon/Makefile.am	(révision 11214)
++++ resip/recon/Makefile.am	(copie de travail)
+@@ -38,6 +38,7 @@
+         MediaEvent.cxx \
+                 MediaInterface.cxx \
+         MediaResourceParticipant.cxx \
++        MediaRecordingParticipant.cxx \
+         MediaResourceCache.cxx \
+         MediaStreamEvent.cxx \
+         Participant.cxx \
+@@ -88,6 +89,7 @@
+         ConversationParticipantAssignment.hxx \
+         RemoteParticipant.hxx \
+         MediaResourceParticipant.hxx \
++        MediaRecordingParticipant.hxx \
+         BridgeMixer.hxx \
+         HandleTypes.hxx \
+         MediaStreamEvent.hxx \

@@ -1,0 +1,12 @@
+{application, b2bua,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { b2bua, []}},
+  {env, []}
+ ]}.
